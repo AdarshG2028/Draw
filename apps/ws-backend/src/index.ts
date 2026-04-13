@@ -76,7 +76,7 @@ wss.on('connection', function connection(ws, request) {
             if (!user) {
                 return;
             }
-            user.rooms.push(parsedData.roomId)
+            user.rooms.push(String(parsedData.roomId))
         }
 
         if (parsedData.type === "leave_room") {
@@ -106,7 +106,7 @@ wss.on('connection', function connection(ws, request) {
             });
 
             users.forEach(user => {
-                if (user.rooms.includes(String(roomId))) {
+                if (user.rooms.includes(String(roomId)) && user.ws !== ws) {
                     user.ws.send(JSON.stringify({
                         type: "chat",
                         message: message,
