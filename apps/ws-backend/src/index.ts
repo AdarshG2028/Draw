@@ -115,6 +115,23 @@ wss.on('connection', function connection(ws, request) {
                 }
             })
         }
+
+    if (parsedData.type === "UPDATE_SHAPES") {
+    const roomId = parsedData.roomId;
+    const shapes = parsedData.shapes;
+
+    console.log("SERVER RECEIVED UPDATE", shapes?.length);
+
+    users.forEach(user => {
+        if (user.rooms.includes(String(roomId)) && user.ws !== ws) {
+            user.ws.send(JSON.stringify({
+                type: "UPDATE_SHAPES",
+                shapes,
+                roomId
+            }))
+        }
+    })
+}
     });
 
     ws.on('close', () => {
