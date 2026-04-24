@@ -8,6 +8,7 @@ type Shape = {
     width: number;
     height: number;
     backgroundColor: string;
+    text?: string;
 } | {
     type: "circle";
     CenterX: number;
@@ -41,6 +42,10 @@ export class Game {
     private selectedTool: Tool = "circle";
     private eraserPath : [number,number][];
     private currentPencilPath: [number, number][] = []
+    private editingShape: Shape | null = null
+    private inputEl: HTMLTextAreaElement | null = null
+    private mouseMoved = false
+    
 
     socket: WebSocket;
     constructor(canvas: HTMLCanvasElement, roomId: string, socket: WebSocket) {
@@ -63,8 +68,16 @@ export class Game {
         this.canvas.removeEventListener("mouseup", this.mouseUpHandler);
     }
 
-    setTool(tool: "circle" | "pencil" | "rect" | "grab" | "eraser" | "line") {
+    setTool(tool: "circle" | "pencil" | "rect" | "grab" | "eraser" | "line" | "text") {
         this.selectedTool = tool; 
+
+        this.canvas.style.cursor =
+    tool === "text" ? "text" :
+    tool === "grab" ? "move" :
+    tool === "eraser" ? "crosshair" :
+    "default"
+
+
     }
 
     setColor(color: string) {
@@ -108,7 +121,16 @@ export class Game {
                this.ctx.fillStyle = this.color;
                this.ctx.fillStyle = shape.backgroundColor;
                this.ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
-                this.ctx.strokeRect(shape.x, shape.y, shape.width, shape.height)
+               this.ctx.strokeRect(shape.x, shape.y, shape.width, shape.height)
+               if (shape.text) {
+  this.drawWrappedText(
+    shape.text,
+    shape.x + 5,
+    shape.y + 5,
+    shape.width - 10,
+    shape.height - 10
+  )
+}
             } else if (shape.type === 'circle') {
                 this.ctx.strokeStyle = "rgba(255,255,255)";
                 this.ctx.fillStyle = shape.backgroundColor;
@@ -227,11 +249,86 @@ isPointInPencil(x, y, shape) {
 
     return false
 }
+    startEditing(shape: Shape) {
+  if (!shape || shape.type !== "rect") return
+
+  this.editingShape = shape
+
+  if (!this.inputEl) {
+    this.inputEl = document.createElement("textarea")
+    document.body.appendChild(this.inputEl)
+    this.inputEl.onblur = () => this.stopEditing()
+  }
+
+  this.inputEl.value = shape.text || ""
+
+  this.inputEl.style.position = "absolute"
+  this.inputEl.style.left = `${shape.x + 5}px`
+  this.inputEl.style.top = `${shape.y + 5}px`
+  this.inputEl.style.width = `${shape.width - 10}px`
+  this.inputEl.style.height = `${shape.height - 10}px`
+  this.inputEl.style.background = "transparent"
+  this.inputEl.style.color = "white"
+  this.inputEl.style.border = "none"
+  this.inputEl.style.outline = "none"
+  this.inputEl.style.resize = "none"
+  this.inputEl.style.overflow = "hidden"
+  this.inputEl.style.whiteSpace = "pre-wrap"
+
+  this.inputEl.focus()
+}
+
+stopEditing() {
+  if (!this.editingShape || !this.inputEl) return
+
+  if (this.editingShape.type === "rect") {
+    this.editingShape.text = this.inputEl.value
+  }
+
+  this.socket.send(JSON.stringify({
+    type: "update_shapes",
+    data: this.existingShapes,
+    roomId: this.roomId
+  }))
+
+  this.editingShape = null
+}
+
+
+
+drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight: number) {
+  const words = text.split(" ")
+  let line = ""
+  let lineHeight = 18
+  let currentY = y
+
+  this.ctx.fillStyle = "white"
+  this.ctx.font = "16px Arial"
+
+  for (let i = 0; i < words.length; i++) {
+    const testLine = line + words[i] + " "
+    const metrics = this.ctx.measureText(testLine)
+
+    if (metrics.width > maxWidth) {
+      if (currentY + lineHeight > y + maxHeight) break
+      this.ctx.fillText(line, x, currentY)
+      line = words[i] + " "
+      currentY += lineHeight
+    } else {
+      line = testLine
+    }
+  }
+
+  if (currentY + lineHeight <= y + maxHeight) {
+    this.ctx.fillText(line, x, currentY)
+  }
+}
 
     mouseDownHandler = (e) => {
         this.clicked = true;
         this.startX = e.clientX;
         this.startY = e.clientY;
+        this.mouseMoved = false
 
         if (this.selectedTool === "grab") {
             for (let i = this.existingShapes.length - 1; i >= 0; i--) {
@@ -257,7 +354,16 @@ isPointInPencil(x, y, shape) {
     }
 
     mouseUpHandler = (e) => {
-        this.clicked = false;
+        this.clicked = false
+
+    if (this.selectedTool === "text" && !this.mouseMoved) {
+        for (const shape of this.existingShapes) {
+            if (this.isPointInRect(e.clientX, e.clientY, shape)) {
+            this.startEditing(shape)
+            return
+            }
+        }
+}
         const width = e.clientX - this.startX;
         const height = e.clientY - this.startY;
 
@@ -311,7 +417,7 @@ isPointInPencil(x, y, shape) {
                 points: this.currentPencilPath,
                 color: this.color
             }
-        }
+        } else 
         this.eraserPath = [];
         
 
@@ -346,6 +452,13 @@ isPointInPencil(x, y, shape) {
             return;
         }
         if (this.clicked) {
+                if (
+                Math.abs(e.clientX - this.startX) > 5 ||
+                Math.abs(e.clientY - this.startY) > 5
+                ) {
+                    this.mouseMoved = true
+                }
+
             const width = e.clientX - this.startX;
             const height = e.clientY - this.startY;
 
@@ -376,6 +489,12 @@ isPointInPencil(x, y, shape) {
                 if(this.draggedShape.type === "rect"){
                     this.draggedShape.x += dx;
                     this.draggedShape.y += dy;
+
+                    if (this.editingShape === this.draggedShape && this.inputEl) {
+                        this.inputEl.style.left = `${this.draggedShape.x + 5}px`
+                        this.inputEl.style.top = `${this.draggedShape.y + 5}px`
+                    }
+
                 } else if (this.draggedShape.type === 'circle'){
                     this.draggedShape.CenterX += dx;
                     this.draggedShape.CenterY += dy;
