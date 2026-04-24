@@ -1,0 +1,30 @@
+
+> vite_react_shadcn_ts@0.0.0 build C:\Users\Adarsh gopal\OneDrive\Desktop\Codes\Debugging\my-turborepo\apps\frontend
+> next build
+
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\Adarsh gopal\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * C:\Users\Adarsh gopal\OneDrive\Desktop\Codes\Debugging\my-turborepo\pnpm-workspace.yaml
+
+▲ Next.js 16.2.1 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 13.7s
+  Running TypeScript ...
+Failed to type check.
+
+./src/components/HeroSection.tsx:68:15
+Type error: Type 'StaticImageData' is not assignable to type 'string | Blob'.
+
+  [90m66 |[0m           <div className=[32m"overflow-hidden rounded-2xl border border-border shadow-2xl shad...[0m
+  [90m67 |[0m             <img
+[31m[1m>[0m [90m68 |[0m               src={heroCanvas}
+  [90m   |[0m               [31m[1m^[0m
+  [90m69 |[0m               alt=[32m"SketchFlow collaborative whiteboard interface"[0m
+  [90m70 |[0m               className=[32m"w-full"[0m
+  [90m71 |[0m               loading=[32m"eager"[0m
+Next.js build worker exited with code: 1 and signal: null
+ ELIFECYCLE  Command failed with exit code 1.
