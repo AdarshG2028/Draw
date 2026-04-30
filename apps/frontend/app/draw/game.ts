@@ -2,6 +2,7 @@ import { Tool } from "@/components/canvas";
 import { getExistingShapes } from "./http";
 
 type Shape = {
+    id: string;
     type: "rect";
     x: number;
     y: number;
@@ -10,6 +11,7 @@ type Shape = {
     backgroundColor: string;
     text?: string;
 } | {
+    id: string;
     type: "circle";
     CenterX: number;
     CenterY: number;
@@ -17,6 +19,7 @@ type Shape = {
     radiusY: number;
     backgroundColor: string;
 } | {
+    id: string;
     type: "line";
     StartX: number;
     StartY: number;
@@ -24,7 +27,8 @@ type Shape = {
     EndY: number;
     color: string;
 } |{
-    type : "pencil",
+    id: string;
+    type: "pencil",
     points :[number,number][];
     color : string;
 }
@@ -74,7 +78,7 @@ export class Game {
         this.canvas.style.cursor =
     tool === "text" ? "text" :
     tool === "grab" ? "move" :
-    tool === "eraser" ? "crosshair" :
+    tool === "eraser" ? "not-allowed" :
     "default"
 
 
@@ -97,16 +101,33 @@ export class Game {
     initHandlers() {
         this.socket.onmessage = (event) => {
             const message = JSON.parse(event.data);
-            if (message.type == 'chat') {
-                const parsedShape = JSON.parse(message.message)
-                this.existingShapes.push(parsedShape.shape);
+            
+            if (message.type === "add_shape") {
+                this.existingShapes.push(message.shape);
+                this.clearCanvas();
+            } else if (message.type === "update_text") {
+                const shape = this.existingShapes.find(s => s.id === message.shapeId);
+                if (shape && shape.type === "rect") {
+                    shape.text = message.text;
+                    this.clearCanvas();
+                }
+            } else if (message.type === "move_shape") {
+                const index = this.existingShapes.findIndex(s => s.id === message.shape.id);
+                if (index !== -1) {
+                    this.existingShapes[index] = message.shape;
+                    this.clearCanvas();
+                }
+            } else if (message.type === "delete_shape") {
+                this.existingShapes = this.existingShapes.filter(s => s.id !== message.shapeId);
+                if (this.editingShape && this.editingShape.id === message.shapeId) {
+                    if (this.inputEl && this.inputEl.parentNode) {
+                        this.inputEl.parentNode.removeChild(this.inputEl);
+                    }
+                    this.inputEl = null;
+                    this.editingShape = null;
+                }
                 this.clearCanvas();
             }
-        if (message.type === "UPDATE_SHAPES") {
-    this.existingShapes = message.shapes || []
-    this.clearCanvas()
-    console.log("received update")
-}
         }
     }
 
@@ -283,45 +304,81 @@ stopEditing() {
 
   if (this.editingShape.type === "rect") {
     this.editingShape.text = this.inputEl.value
+
+    this.socket.send(JSON.stringify({
+      type: "update_text",
+      shapeId: this.editingShape.id,
+      text: this.editingShape.text,
+      roomId: this.roomId
+    }))
   }
 
-  this.socket.send(JSON.stringify({
-    type: "update_shapes",
-    data: this.existingShapes,
-    roomId: this.roomId
-  }))
-
+  if (this.inputEl && this.inputEl.parentNode) {
+    this.inputEl.parentNode.removeChild(this.inputEl)
+  }
+  this.inputEl = null
   this.editingShape = null
+  this.clearCanvas()
 }
 
 
 
 drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight: number) {
+  this.ctx.save()
+  this.ctx.beginPath()
+  this.ctx.rect(x, y, maxWidth, maxHeight)
+  this.ctx.clip()
+
+  this.ctx.fillStyle = "white"
+  this.ctx.font = "16px Arial"
+  this.ctx.textBaseline = "top"
+
   const words = text.split(" ")
   let line = ""
   let lineHeight = 18
   let currentY = y
 
-  this.ctx.fillStyle = "white"
-  this.ctx.font = "16px Arial"
-
   for (let i = 0; i < words.length; i++) {
-    const testLine = line + words[i] + " "
-    const metrics = this.ctx.measureText(testLine)
+    let word = words[i]
 
-    if (metrics.width > maxWidth) {
-      if (currentY + lineHeight > y + maxHeight) break
-      this.ctx.fillText(line, x, currentY)
-      line = words[i] + " "
-      currentY += lineHeight
+    if (this.ctx.measureText(word).width > maxWidth) {
+      if (line !== "") {
+        this.ctx.fillText(line, x, currentY)
+        currentY += lineHeight
+        line = ""
+      }
+      for (let j = 0; j < word.length; j++) {
+        const testLine = line + word[j]
+        if (this.ctx.measureText(testLine).width > maxWidth) {
+          if (currentY + lineHeight > y + maxHeight) break
+          this.ctx.fillText(line, x, currentY)
+          currentY += lineHeight
+          line = word[j]
+        } else {
+          line = testLine
+        }
+      }
+      line += " "
     } else {
-      line = testLine
+      const testLine = line + word + " "
+      const metrics = this.ctx.measureText(testLine)
+
+      if (metrics.width > maxWidth) {
+        if (currentY + lineHeight > y + maxHeight) break
+        this.ctx.fillText(line, x, currentY)
+        line = word + " "
+        currentY += lineHeight
+      } else {
+        line = testLine
+      }
     }
   }
 
   if (currentY + lineHeight <= y + maxHeight) {
     this.ctx.fillText(line, x, currentY)
   }
+
+  this.ctx.restore()
 }
 
     mouseDownHandler = (e) => {
@@ -369,10 +426,12 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
 
         const selectedTool = this.selectedTool;
         let shape: Shape | null = null;
+        const id = crypto.randomUUID();
 
 
         if (this.selectedTool === "rect") {
             shape = {
+                id,
                 type: "rect",
                 x: this.startX,
                 y: this.startY,
@@ -384,6 +443,7 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
             const radiusX = width / 2;
             const radiusY = height / 2;
             shape = {
+                id,
                 type: "circle",
                 CenterX: this.startX + radiusX,
                 CenterY: this.startY + radiusY,
@@ -393,6 +453,7 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
             }
         } else if(this.selectedTool === "line"){
             shape = {
+                id,
                 type : "line",
                 StartX : this.startX,
                 StartY : this.startY,
@@ -401,6 +462,7 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
                 color : this.color
             }
         } else if(this.selectedTool === "eraser"){
+            const previousShapes = this.existingShapes;
             this.existingShapes = this.existingShapes.filter((shape) =>{
                 if(!shape) return false;
                 return !this.eraserPath.some((point) =>{
@@ -408,45 +470,55 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
                 })
             })
             
+            const removedShapes = previousShapes.filter(s => !this.existingShapes.includes(s));
+            removedShapes.forEach(s => {
+                if (this.editingShape && this.editingShape.id === s.id) {
+                    if (this.inputEl && this.inputEl.parentNode) {
+                        this.inputEl.parentNode.removeChild(this.inputEl);
+                    }
+                    this.inputEl = null;
+                    this.editingShape = null;
+                }
+                this.socket.send(JSON.stringify({
+                    type: "delete_shape",
+                    shapeId: s.id,
+                    roomId: this.roomId
+                }));
+            });
+            
             this.clearCanvas();
         } else if(this.selectedTool === "grab"){
+            if (this.draggedShape) {
+                this.socket.send(JSON.stringify({
+                    type: "move_shape",
+                    shape: this.draggedShape,
+                    roomId: this.roomId
+                }));
+            }
             this.draggedShape = null;
         } else if (this.selectedTool === "pencil") {
             shape = {
+                id,
                 type: "pencil",
                 points: this.currentPencilPath,
                 color: this.color
             }
-        } else 
-        this.eraserPath = [];
-        
-
-        
+        } else {
+            this.eraserPath = [];
+        }
 
         if(shape){
             this.existingShapes.push(shape);
-        // this.clearCanvas()
-        console.log(shape)
+            // this.clearCanvas()
+            console.log(shape)
 
-        this.socket.send(JSON.stringify({
-            type: "chat",
-            message: JSON.stringify({
-                shape
-            }),
-            roomId: this.roomId
-        }))
+            this.socket.send(JSON.stringify({
+                type: "add_shape",
+                shape,
+                roomId: this.roomId
+            }))
         }
-
-        if(selectedTool ==="grab" ||selectedTool === "eraser"){
-       this.socket.send(JSON.stringify({
-    type: "UPDATE_SHAPES",
-    shapes: this.existingShapes,
-    roomId: this.roomId
-}))
-        }
-        
     }
-
     mouseMoveHandler = (e) => {
         if (!this.clicked) {
             return;
@@ -462,28 +534,9 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
             const width = e.clientX - this.startX;
             const height = e.clientY - this.startY;
 
-            this.clearCanvas();
-
-            this.ctx.strokeStyle = "rgba(255,255,255)";
             const selectedTool = this.selectedTool;
-            console.log(selectedTool)
-            if (selectedTool === "rect") {
-                this.ctx.strokeStyle = "rgba(255,255,255)";
-                this.ctx.fillStyle = this.color;
-                this.ctx.fillRect(this.startX, this.startY, width, height);
-                this.ctx.strokeRect(this.startX, this.startY, width, height);
-            } else if (selectedTool === 'circle') {
-                const radiusX = (width / 2);
-                const radiusY = (height / 2);
-                
-                this.ctx.strokeStyle = "rgba(255,255,255)";
-                this.ctx.fillStyle = this.color;
-                this.ctx.beginPath();
-                this.ctx.ellipse(this.startX + radiusX, this.startY + radiusY, Math.abs(radiusX), Math.abs(radiusY), 0, 0, 2 * Math.PI);
-                this.ctx.fill();
-                this.ctx.stroke();
-                this.ctx.closePath();
-            } else if(selectedTool ==='grab' && this.draggedShape){
+
+            if(selectedTool ==='grab' && this.draggedShape){
                 let dx = e.clientX - this.startX;
                 let dy = e.clientY - this.startY;
                 if(this.draggedShape.type === "rect"){
@@ -511,7 +564,30 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
 
             } else if (selectedTool === 'eraser'){
                 this.eraserPath.push([e.clientX,e.clientY]);
+            } else if (selectedTool === "pencil") {
+                this.currentPencilPath.push([e.clientX, e.clientY])
+            }
+
+            this.clearCanvas();
+
+            this.ctx.strokeStyle = "rgba(255,255,255)";
+            console.log(selectedTool)
+            if (selectedTool === "rect") {
+                this.ctx.strokeStyle = "rgba(255,255,255)";
+                this.ctx.fillStyle = this.color;
+                this.ctx.fillRect(this.startX, this.startY, width, height);
+                this.ctx.strokeRect(this.startX, this.startY, width, height);
+            } else if (selectedTool === 'circle') {
+                const radiusX = (width / 2);
+                const radiusY = (height / 2);
                 
+                this.ctx.strokeStyle = "rgba(255,255,255)";
+                this.ctx.fillStyle = this.color;
+                this.ctx.beginPath();
+                this.ctx.ellipse(this.startX + radiusX, this.startY + radiusY, Math.abs(radiusX), Math.abs(radiusY), 0, 0, 2 * Math.PI);
+                this.ctx.fill();
+                this.ctx.stroke();
+                this.ctx.closePath();
             } else if (selectedTool === 'line'){
                 this.ctx.beginPath();
                 this.ctx.fillStyle = this.color;
@@ -519,8 +595,6 @@ drawWrappedText(text: string, x: number, y: number, maxWidth: number, maxHeight:
                 this.ctx.lineTo(e.clientX, e.clientY);
                 this.ctx.stroke();
             } else if (selectedTool === "pencil") {
-                this.currentPencilPath.push([e.clientX, e.clientY])
-
                 this.ctx.beginPath()
                 const points = this.currentPencilPath
 

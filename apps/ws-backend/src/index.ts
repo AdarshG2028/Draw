@@ -15,6 +15,29 @@ interface User {
 
 const users: User[] = [];
 
+const roomShapes = new Map<string, any[]>();
+const dirtyRooms = new Set<string>();
+
+setInterval(async () => {
+    const roomsToSave = Array.from(dirtyRooms);
+    dirtyRooms.clear();
+    for (const roomId of roomsToSave) {
+        const shapes = roomShapes.get(roomId);
+        if (shapes) {
+            try {
+                await prisma.roomState.upsert({
+                    where: { roomId: Number(roomId) },
+                    update: { snapshot: shapes },
+                    create: { roomId: Number(roomId), snapshot: shapes }
+                });
+            } catch (e) {
+                console.error("Failed to save snapshot for room", roomId, e);
+                dirtyRooms.add(roomId); // Retry next time
+            }
+        }
+    }
+}, 5000);
+
 function CheckUser(token: string): string | null {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -76,7 +99,20 @@ wss.on('connection', function connection(ws, request) {
             if (!user) {
                 return;
             }
-            user.rooms.push(String(parsedData.roomId))
+            const roomIdStr = String(parsedData.roomId);
+            user.rooms.push(roomIdStr);
+            
+            if (!roomShapes.has(roomIdStr)) {
+                roomShapes.set(roomIdStr, []); // Init empty just in case
+                // Optionally load from DB to initialize in memory if it doesn't exist yet
+                prisma.roomState.findUnique({
+                    where: { roomId: Number(roomIdStr) }
+                }).then((dbState: any) => {
+                    if (dbState && dbState.snapshot) {
+                        roomShapes.set(roomIdStr, dbState.snapshot as any[]);
+                    }
+                }).catch((e: any) => console.error("Error loading room state:", e));
+            }
         }
 
         if (parsedData.type === "leave_room") {
@@ -89,49 +125,38 @@ wss.on('connection', function connection(ws, request) {
 
         }
 
-        if (parsedData.type == "chat") {
-            const roomId = parsedData.roomId;
-            const message = parsedData.message;
-
-            if (!roomId || isNaN(Number(roomId))) {
-                return;
-            }
-
-            await prisma.chat.create({
-                data: {
-                    roomId: Number(roomId),
-                    message,
-                    userId
+        if (["add_shape", "update_text", "move_shape", "delete_shape"].includes(parsedData.type)) {
+            const roomId = String(parsedData.roomId);
+            const shapes = roomShapes.get(roomId) || [];
+            
+            if (parsedData.type === "add_shape") {
+                shapes.push(parsedData.shape);
+            } else if (parsedData.type === "update_text") {
+                const shape = shapes.find((s: any) => s.id === parsedData.shapeId);
+                if (shape) {
+                    shape.text = parsedData.text;
                 }
-            });
+            } else if (parsedData.type === "move_shape") {
+                const index = shapes.findIndex((s: any) => s.id === parsedData.shape.id);
+                if (index !== -1) {
+                    shapes[index] = parsedData.shape;
+                }
+            } else if (parsedData.type === "delete_shape") {
+                const index = shapes.findIndex((s: any) => s.id === parsedData.shapeId);
+                if (index !== -1) {
+                    shapes.splice(index, 1);
+                }
+            }
+            
+            roomShapes.set(roomId, shapes);
+            dirtyRooms.add(roomId);
 
             users.forEach(user => {
-                if (user.rooms.includes(String(roomId)) && user.ws !== ws) {
-                    user.ws.send(JSON.stringify({
-                        type: "chat",
-                        message: message,
-                        roomId
-                    }))
+                if (user.rooms.includes(roomId) && user.ws !== ws) {
+                    user.ws.send(JSON.stringify(parsedData));
                 }
-            })
+            });
         }
-
-    if (parsedData.type === "UPDATE_SHAPES") {
-    const roomId = parsedData.roomId;
-    const shapes = parsedData.shapes;
-
-    console.log("SERVER RECEIVED UPDATE", shapes?.length);
-
-    users.forEach(user => {
-        if (user.rooms.includes(String(roomId)) && user.ws !== ws) {
-            user.ws.send(JSON.stringify({
-                type: "UPDATE_SHAPES",
-                shapes,
-                roomId
-            }))
-        }
-    })
-}
     });
 
     ws.on('close', () => {

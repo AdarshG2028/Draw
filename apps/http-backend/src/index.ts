@@ -169,4 +169,32 @@ app.get("/room/:slug", async (req, res) => {
 
 })
 
+app.get("/room/:roomId/state", async (req, res) => {
+  const roomId = Number(req.params.roomId);
+
+  if (isNaN(roomId)) {
+      res.json({
+          snapshot: []
+      });
+      return;
+  }
+
+  try {
+    const roomState = await prisma.roomState.findUnique({
+      where: {
+        roomId: roomId
+      }
+    });
+
+    res.json({
+      snapshot: roomState ? roomState.snapshot : []
+    })
+  } catch (e) {
+    console.log(e)
+    res.json({
+      snapshot: []
+    })
+  }
+})
+
 app.listen(3000);

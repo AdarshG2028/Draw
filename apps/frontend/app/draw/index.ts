@@ -39,9 +39,8 @@ export default async function initDraw(canvasRef : React.RefObject<HTMLCanvasEle
             // ctx.fillRect(0,0,canvas.width,canvas.height);
             socket.onmessage = (event) => {
                 const message = JSON.parse(event.data);
-                if(message.type === "chat"){
-                    const parsedMessage = JSON.parse(message.message);
-                    existingShapes.push(parsedMessage.shape);
+                if(message.type === "add_shape"){
+                    existingShapes.push(message.shape);
                     clearCanvas(existingShapes,canvas,ctx);
                 }
             }
@@ -71,17 +70,17 @@ export default async function initDraw(canvasRef : React.RefObject<HTMLCanvasEle
                     width,
                     height
                 })
+                        const id = crypto.randomUUID()
                         socket.send(JSON.stringify({
-            type: "chat",
-            message: JSON.stringify({
-                shape : {
-                    type : "rect",
-                    x : startX,
-                    y : startY,
-                    width,
-                    height
-                }
-            }),
+            type: "add_shape",
+            shape : {
+                id,
+                type : "rect",
+                x : startX,
+                y : startY,
+                width,
+                height
+            },
             roomId
         }))
             })
@@ -129,14 +128,7 @@ function clearCanvas(existingShapes : Shape[] , canvas : HTMLCanvasElement , ctx
 }
 
 async function getExistingShapes(roomId: string){
-    const res = await axios.get(`${HTTP_BACKEND}/chats/${roomId}`)
-    const messages = res.data.messages;
-
-    const shapes = messages.map((x:{message:string})=>{
-        const messageData = JSON.parse(x.message);
-        return messageData.shape;
-    })
-
-    return shapes;
+    const res = await axios.get(`${HTTP_BACKEND}/room/${roomId}/state`)
+    return res.data.snapshot || [];
 }
 
